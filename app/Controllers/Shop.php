@@ -7,6 +7,7 @@ use App\Models\CategoryModel;
 use App\Models\InventoryModel;
 use App\Models\OrderModel;
 use App\Models\OrderItemModel;
+use App\Libraries\EmailService;
 use CodeIgniter\Controller;
 
 class Shop extends Controller
@@ -16,6 +17,7 @@ class Shop extends Controller
     protected $inventoryModel;
     protected $orderModel;
     protected $orderItemModel;
+    protected $emailService;
     protected $helpers = ['form', 'url', 'text'];
 
     public function __construct()
@@ -32,7 +34,8 @@ class Shop extends Controller
         $data = [
             'title' => 'Online Store',
             'categories' => $this->categoryModel->getActiveCategories(),
-            'featuredProducts' => $this->productModel->getAvailableProducts(),
+            'featuredProducts' => $this->productModel->where('status', 'Available')->paginate(10, 'products'),
+            'pager' => $this->productModel->pager,
             'totalProducts' => count($this->productModel->getAvailableProducts()),
         ];
 
@@ -50,13 +53,14 @@ class Shop extends Controller
             throw new \CodeIgniter\Exceptions\PageNotFoundException('Category not found');
         }
 
-        $products = $this->productModel->getProductByCategory($categoryId);
-        
         $data = [
             'title' => 'Category: ' . $category['name'],
             'category' => $category,
             'categories' => $this->categoryModel->getActiveCategories(),
-            'products' => $products,
+            'products' => $this->productModel->where('category_id', $categoryId)
+                                             ->where('status', 'Available')
+                                             ->paginate(10, 'category_products'),
+            'pager' => $this->productModel->pager,
             'search' => false,
         ];
 
@@ -69,13 +73,17 @@ class Shop extends Controller
         $products = [];
 
         if (strlen($keyword) >= 2) {
-            $products = $this->productModel->searchProducts($keyword);
+            $products = $this->productModel->like('name', $keyword)
+                                           ->orLike('description', $keyword)
+                                           ->where('status', 'Available')
+                                           ->paginate(10, 'search_results');
         }
 
         $data = [
             'title' => 'Search Results',
             'keyword' => $keyword,
             'products' => $products,
+            'pager' => $this->productModel->pager,
             'categories' => $this->categoryModel->getActiveCategories(),
             'search' => true,
         ];
@@ -163,47 +171,6 @@ class Shop extends Controller
         return redirect()->back();
     }
 
-    public function removeFromCart()
-    {
-        if (!session()->get('logged_in')) {
-            return redirect()->to('/auth/login');
-        }
-
-        $productId = $this->request->getPost('product_id');
-        $cart = session()->get('cart') ?? [];
-
-        if (isset($cart[$productId])) {
-            unset($cart[$productId]);
-            session()->set('cart', $cart);
-            session()->setFlashdata('success', 'Product removed from cart.');
-        }
-
-        return redirect()->back();
-    }
-
-    public function checkout()
-    {
-        if (!session()->get('logged_in')) {
-            return redirect()->to('/auth/login');
-        }
-
-        $cart = session()->get('cart') ?? [];
-
-        if (empty($cart)) {
-            session()->setFlashdata('error', 'Your cart is empty.');
-            return redirect()->to('/shop/cart');
-        }
-
-        $data = [
-            'title' => 'Checkout',
-            'cart' => $cart,
-            'userId' => session()->get('user_id'),
-            'categories' => $this->categoryModel->getActiveCategories(),
-        ];
-
-        return view('shop/checkout', $data);
-    }
-
     public function processOrder()
     {
         if (!session()->get('logged_in')) {
@@ -226,7 +193,6 @@ class Shop extends Controller
             return redirect()->back()->withInput()->with('errors', $this->validator->getErrors());
         }
 
-        // Calculate totals
         $subtotal = 0;
         foreach ($cart as $item) {
             $subtotal += $item['price'] * $item['quantity'];
@@ -236,7 +202,6 @@ class Shop extends Controller
         $shippingFee = 5.00;
         $totalAmount = $subtotal + $taxAmount + $shippingFee;
 
-        // Create order
         $orderData = [
             'customer_id' => session()->get('user_id'),
             'order_number' => $this->orderModel->generateOrderNumber(),
@@ -254,7 +219,8 @@ class Shop extends Controller
         $orderId = $this->orderModel->insert($orderData, true);
 
         if ($orderId) {
-            // Add order items
+            $itemDetailsForEmail = [];
+
             foreach ($cart as $productId => $item) {
                 $this->orderItemModel->insert([
                     'order_id' => $orderId,
@@ -264,8 +230,15 @@ class Shop extends Controller
                     'total_price' => $item['price'] * $item['quantity'],
                 ]);
 
-                // Update inventory
+                $itemDetailsForEmail[] = [
+                    'name' => $item['name'],
+                    'quantity' => $item['quantity'],
+                    'total_price' => $item['price'] * $item['quantity']
+                ];
+
                 $inventory = $this->inventoryModel->getByProductId($productId);
+                $product = $this->productModel->find($productId);
+
                 $newQuantity = $inventory['quantity_on_hand'] - $item['quantity'];
                 $newReserved = $inventory['quantity_reserved'] + $item['quantity'];
                 
@@ -274,43 +247,31 @@ class Shop extends Controller
                     'quantity_reserved' => $newReserved,
                     'quantity_available' => $newQuantity - $newReserved,
                 ]);
+
+                if ($newQuantity <= $inventory['reorder_level']) {
+                    $this->emailService->sendLowStockNotification(
+                        $product['name'], 
+                        $newQuantity, 
+                        $inventory['reorder_level']
+                    );
+                }
             }
 
-            // Clear cart
+            $customerData = [
+                'email' => session()->get('user_email'),
+                'first_name' => session()->get('first_name') ?? 'Valued Customer',
+                'last_name' => session()->get('last_name') ?? ''
+            ];
+
+            $this->emailService->sendOrderAlerts($orderData, $customerData, $itemDetailsForEmail);
+
             session()->remove('cart');
             session()->setFlashdata('success', 'Order placed successfully!');
             return redirect()->to('/shop/order-confirmation/' . $orderId);
         } else {
-            session()->setFlashdata('error', 'Failed to create order. Please try again.');
+            session()->setFlashdata('error', 'Failed to create order.');
             return redirect()->back();
         }
-    }
-
-    public function orderConfirmation($orderId = null)
-    {
-        if (!session()->get('logged_in')) {
-            return redirect()->to('/auth/login');
-        }
-
-        if (!$orderId) {
-            return redirect()->to('/');
-        }
-
-        $order = $this->orderModel->getOrderWithItems($orderId);
-        if (!$order || $order['customer_id'] != session()->get('user_id')) {
-            throw new \CodeIgniter\Exceptions\PageNotFoundException('Order not found');
-        }
-
-        $orderItems = $this->orderItemModel->getOrderItems($orderId);
-
-        $data = [
-            'title' => 'Order Confirmation',
-            'order' => $order,
-            'items' => $orderItems,
-            'categories' => $this->categoryModel->getActiveCategories(),
-        ];
-
-        return view('shop/order-confirmation', $data);
     }
 
     public function myOrders()
@@ -319,41 +280,15 @@ class Shop extends Controller
             return redirect()->to('/auth/login');
         }
 
-        $orders = $this->orderModel->getCustomerOrders(session()->get('user_id'));
-
         $data = [
             'title' => 'My Orders',
-            'orders' => $orders,
+            'orders' => $this->orderModel->where('customer_id', session()->get('user_id'))
+                                         ->orderBy('created_at', 'DESC')
+                                         ->paginate(10, 'my_orders'),
+            'pager' => $this->orderModel->pager,
             'categories' => $this->categoryModel->getActiveCategories(),
         ];
 
         return view('shop/my-orders', $data);
-    }
-
-    public function orderDetails($orderId = null)
-    {
-        if (!session()->get('logged_in')) {
-            return redirect()->to('/auth/login');
-        }
-
-        if (!$orderId) {
-            return redirect()->to('/shop/my-orders');
-        }
-
-        $order = $this->orderModel->getOrderWithItems($orderId);
-        if (!$order || $order['customer_id'] != session()->get('user_id')) {
-            throw new \CodeIgniter\Exceptions\PageNotFoundException('Order not found');
-        }
-
-        $orderItems = $this->orderItemModel->getOrderItems($orderId);
-
-        $data = [
-            'title' => 'Order Details',
-            'order' => $order,
-            'items' => $orderItems,
-            'categories' => $this->categoryModel->getActiveCategories(),
-        ];
-
-        return view('shop/order-details', $data);
     }
 }

@@ -3,56 +3,17 @@
 <?= $this->section('content') ?>
 
 <div class="container">
-    <h2 class="mb-4">My Orders</h2>
+    <h2 class="my-4">My Orders</h2>
 
-    <?php if (!empty($orders)): ?>
-        <div class="card">
-            <div class="table-responsive">
-                <table class="table table-hover mb-0">
-                    <thead>
-                        <tr>
-                            <th>Order Number</th>
-                            <th>Date</th>
-                            <th>Items</th>
-                            <th>Total</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($orders as $order): ?>
-                            <tr>
-                                <td><strong><?= esc($order['order_number']) ?></strong></td>
-                                <td><?= date('M d, Y', strtotime($order['order_date'])) ?></td>
-                                <td><?= $order['total_items'] ?></td>
-                                <td>₱<?= number_format($order['total_amount'], 2) ?></td>
-                                <td>
-                                    <?php
-                                        $statusClass = [
-                                            'Pending' => 'warning',
-                                            'Confirmed' => 'info',
-                                            'Processing' => 'info',
-                                            'Shipped' => 'primary',
-                                            'Delivered' => 'success',
-                                            'Cancelled' => 'danger'
-                                        ];
-                                        $class = $statusClass[$order['status']] ?? 'secondary';
-                                    ?>
-                                    <span class="badge bg-<?= $class ?>"><?= $order['status'] ?></span>
-                                </td>
-                                <td>
-                                    <a href="/shop/order/<?= $order['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    <?php else: ?>
-        <div class="alert alert-info">
-            <p>No orders yet</p>
-            <a href="/shop" class="btn btn-primary">Start Shopping</a>
+    <!-- Existing customer orders table/list content would go here, displaying $orders -->
+
+    <?php if (isset($pager) && $pager->getPageCount('my_orders') > 1): ?>
+        <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
+            <?php for ($i = 1; $i <= $pager->getPageCount('my_orders'); $i++): ?>
+                <a href="<?= $pager->getPageURI($i, 'my_orders') ?>" class="btn <?= ($pager->getCurrentPage('my_orders') == $i) ? 'btn-primary' : 'btn-outline-primary' ?>">
+                    <?= $i ?>
+                </a>
+            <?php endfor; ?>
         </div>
     <?php endif; ?>
 </div>

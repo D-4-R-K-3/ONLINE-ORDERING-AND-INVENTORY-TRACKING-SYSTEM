@@ -43,7 +43,15 @@
         </div>
     </div>
 
-    <!-- pagination hidden -->
+    <?php if (isset($pager) && $pager->getPageCount() > 1): ?>
+        <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
+            <?php for ($i = 1; $i <= $pager->getPageCount(); $i++): ?>
+                <a href="<?= $pager->getPageURI($i) ?>" class="btn <?= ($pager->getCurrentPage() == $i) ? 'btn-primary' : 'btn-outline-primary' ?>">
+                    <?= $i ?>
+                </a>
+            <?php endfor; ?>
+        </div>
+    <?php endif; ?>
 </div>
 
 <?= $this->endSection() ?>

@@ -81,7 +81,7 @@ class Dashboard extends Controller
         $perPage = 10;
         $products = $this->productModel->select('products.*, categories.name as category_name')
                                        ->join('categories', 'categories.id = products.category_id', 'left')
-                                       ->orderBy('products.id', 'DESC')->paginate($perPage, 'default', $page);
+                                       ->orderBy('products.id', 'DESC')->paginate($perPage);
         $pager = $this->productModel->pager;
 
         $data = [
@@ -90,7 +90,7 @@ class Dashboard extends Controller
             'pager' => $pager,
         ];
 
-        return view('admin/products/index', $data);
+        return view('admin/products_index', $data);
     }
 
     public function addProduct()
@@ -261,19 +261,20 @@ class Dashboard extends Controller
     }
 
     // Inventory Management
-    public function inventory($page = 1)
+    public function inventory($page = 1) // Added $page parameter for pagination
     {
         if (!session()->get('logged_in') || !in_array(session()->get('role'), ['Admin', 'Staff'])) {
             return redirect()->to('/');
         }
 
         $perPage = 10;
-        $builder = $this->inventoryModel->select('inventory.*, products.name, products.sku')
-                                        ->join('products', 'products.id = inventory.product_id', 'inner')
-                                        ->orderBy('inventory.id', 'DESC');
+        $builder = $this->inventoryModel
+                        ->select('inventory.*, products.name, products.sku')
+                        ->join('products', 'products.id = inventory.product_id', 'inner')
+                        ->orderBy('inventory.id', 'DESC');
         
-        $total = $builder->countAllResults(false);
-        $inventory = $builder->paginate($perPage, 'default', $page);
+        // Paginate the results
+        $inventory = $builder->paginate($perPage); 
         $pager = $this->inventoryModel->pager;
 
         $data = [
@@ -358,17 +359,29 @@ class Dashboard extends Controller
         return view('admin/inventory/update', $data);
     }
 
-    public function lowStock()
+    public function lowStock($page = 1) // Added $page parameter for pagination
     {
         if (!session()->get('logged_in') || !in_array(session()->get('role'), ['Admin', 'Staff'])) {
             return redirect()->to('/');
         }
 
-        $lowStockProducts = $this->inventoryModel->getLowStockProducts();
+        $perPage = 10; // Define items per page
+        
+        // Build the query for low stock products
+        $builder = $this->inventoryModel
+                        ->select('inventory.*, products.name, products.sku')
+                        ->join('products', 'products.id = inventory.product_id', 'inner')
+                        ->where('inventory.quantity_available <= inventory.reorder_level')
+                        ->orderBy('inventory.quantity_available', 'ASC'); // Order by lowest quantity first
+
+        // Paginate the results
+        $lowStockProducts = $builder->paginate($perPage);
+        $pager = $this->inventoryModel->pager; // Get the pager instance
 
         $data = [
             'title' => 'Low Stock Products',
             'products' => $lowStockProducts,
+            'pager' => $pager, // Pass pager to the view
         ];
 
         return view('admin/inventory/low-stock', $data);
@@ -376,18 +389,20 @@ class Dashboard extends Controller
 
     // Order Management
     public function orders($page = 1)
+    // Added $page parameter for pagination
     {
         if (!session()->get('logged_in') || !in_array(session()->get('role'), ['Admin', 'Staff'])) {
             return redirect()->to('/');
         }
 
         $perPage = 10;
-        $builder = $this->orderModel->select('orders.*, users.first_name, users.last_name, users.email')
-                                     ->join('users', 'users.id = orders.customer_id', 'inner')
-                                     ->orderBy('orders.order_date', 'DESC');
+        $builder = $this->orderModel
+                        ->select('orders.*, users.first_name, users.last_name, users.email')
+                        ->join('users', 'users.id = orders.customer_id', 'inner')
+                        ->orderBy('orders.order_date', 'DESC');
 
-        $total = $builder->countAllResults(false);
-        $orders = $builder->paginate($perPage, 'default', $page);
+        // Paginate the results
+        $orders = $builder->paginate($perPage); 
         $pager = $this->orderModel->pager;
 
         $data = [
